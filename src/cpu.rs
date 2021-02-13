@@ -1,4 +1,5 @@
 use super::*;
+use std::cmp::min;
 
 bitflags! {
     pub struct ProcStatus: u8 {
@@ -15,7 +16,7 @@ bitflags! {
 #[derive(Debug)]
 pub struct Cpu {
     pub pc: Word, // program counter
-    pub sp: Word, // stack pointer
+    pub sp: Byte, // stack pointer
 
     // registers
     pub a: Byte,
@@ -29,53 +30,103 @@ impl Cpu {
     pub fn new() -> Cpu {
         Cpu {
             pc: 0xFFFC,
-            sp: 0x0100,
-            a: 0,
-            x: 0,
-            y: 0,
+            sp: 0x00,
+            a: 0x00,
+            x: 0x00,
+            y: 0x00,
             ps: ProcStatus::empty(),
         }
     }
 
     pub fn reset(&mut self, mem: &mut Mem) {
         self.pc = 0xFFFC;
-        self.sp = 0x0100;
-        self.a = 0;
-        self.x = 0;
-        self.y = 0;
+        self.sp = 0x00;
+        self.a = 0x00;
+        self.x = 0x00;
+        self.y = 0x00;
         self.ps = ProcStatus::empty();
         mem.initialize();
     }
 
-    pub fn execute(&mut self, mut cycles: u32, mem: &mut Mem) {
-        while cycles > 0 {
+    pub fn execute(&mut self, mut cycles: &mut i32, mem: &mut Mem) {
+        while *cycles > 0 {
             let ins: Byte = self.fetch_byte(&mut cycles, mem);
 
             match ins {
+                OP_JSR => {
+                    let sub_addr = self.fetch_word(&mut cycles, mem);
+                    mem.write_word(
+                        &mut cycles,
+                        Cpu::get_stack_addr(self.sp),
+                        self.pc.wrapping_sub(1),
+                    );
+                    self.sp += self.sp.wrapping_add(1);
+                    self.pc = sub_addr;
+                    Cpu::decrement_cycles(&mut cycles, 1);
+                }
                 OP_LDA_IM => {
-                    let arg = self.fetch_byte(&mut cycles, mem);
-                    self.a = arg;
-                    self.ps.set(ProcStatus::Z, self.a == 0); // is zero
-                    self.ps.set(ProcStatus::N, self.a & 0b10000000 > 0) // is negative
+                    self.a = self.fetch_byte(&mut cycles, mem);
+                    self.lda_set_status();
+                }
+                OP_LDA_ZP => {
+                    let zero_page_addr = self.fetch_byte(&mut cycles, mem);
+                    self.a = Cpu::read_byte(&mut cycles, mem, zero_page_addr);
+                    self.lda_set_status();
+                }
+                OP_LDA_ZPX => {
+                    let zero_page_addr = self.fetch_byte(&mut cycles, mem).wrapping_add(self.x);
+                    *cycles -= 1;
+                    self.a = Cpu::read_byte(&mut cycles, mem, zero_page_addr);
+                    self.lda_set_status();
                 }
                 OP_NOP => {
-                    cycles -= 2;
+                    Cpu::decrement_cycles(&mut cycles, 1);
                 }
                 _ => panic!("UNKNOWN OP!"),
             }
         }
     }
 
-    fn fetch_byte(&mut self, cycles: &mut u32, mem: &Mem) -> Byte {
+    fn lda_set_status(&mut self) {
+        self.ps.set(ProcStatus::Z, self.a == 0); // is zero
+        self.ps.set(ProcStatus::N, self.a & 0b10000000 > 0) // is negative
+    }
+
+    fn increment_pc(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+    }
+
+    pub fn decrement_cycles(cycles: &mut i32, cost: i32) {
+        *cycles -= min(*cycles, cost);
+    }
+
+    fn read_byte(cycles: &mut i32, mem: &Mem, address: Byte) -> Byte {
+        let data: Byte = mem[address as usize];
+        Cpu::decrement_cycles(cycles, 1);
+        data
+    }
+
+    fn fetch_byte(&mut self, cycles: &mut i32, mem: &Mem) -> Byte {
         let data: Byte = mem[self.pc as usize];
+        self.increment_pc();
+        Cpu::decrement_cycles(cycles, 1);
+        data
+    }
 
-        // println!(
-        //     "Fetched instruction 0x{:02X?} from address 0x{:04X?}",
-        //     data, self.pc
-        // );
+    fn get_stack_addr(sp: Byte) -> Word {
+        let stack_addr: Word = 0x0100;
+        stack_addr | sp as Word
+    }
 
-        self.pc += 1;
-        *cycles -= 1;
+    fn fetch_word(&mut self, cycles: &mut i32, mem: &Mem) -> Word {
+        // 6502 is little endian
+        let mut data: Word = mem[self.pc as usize] as Word;
+        self.increment_pc();
+
+        data |= (mem[self.pc as usize] as Word) << 8;
+        self.increment_pc();
+
+        Cpu::decrement_cycles(cycles, 2);
         data
     }
 }

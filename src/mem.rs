@@ -6,7 +6,7 @@ const MAX_MEM: usize = 1024 * 64;
 
 #[derive(Debug)]
 pub struct Mem {
-    data: [Byte; MAX_MEM],
+    pub data: [Byte; MAX_MEM],
 }
 
 impl Mem {
@@ -18,6 +18,12 @@ impl Mem {
 
     pub fn initialize(&mut self) {
         self.data = [OP_NOP; MAX_MEM];
+    }
+
+    pub fn write_word(&mut self, cycles: &mut i32, addr: Word, data: Word) {
+        self[addr as usize] = data as Byte;
+        self[(addr + 1) as usize] = (data >> 8) as Byte;
+        Cpu::decrement_cycles(cycles, 2);
     }
 }
 
